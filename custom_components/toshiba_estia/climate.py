@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import logging
+import math
 from time import monotonic
 from typing import Any
 
@@ -16,7 +17,15 @@ from homeassistant.components.climate.const import (
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import DOMAIN
+from .const import (
+    CONF_ZONE1_MAX_TEMP,
+    CONF_ZONE1_MIN_TEMP,
+    CONF_ZONE2_MAX_TEMP,
+    CONF_ZONE2_MIN_TEMP,
+    DEFAULT_ZONE_MAX_TEMP,
+    DEFAULT_ZONE_MIN_TEMP,
+    DOMAIN,
+)
 from .entity import ToshibaAcStateEntity
 from .estia_compat import set_hvac_mode, set_zone_temperature, set_zones_enabled
 
@@ -29,16 +38,37 @@ async def async_setup_entry(hass, config_entry, async_add_devices):
     new_entities = []
 
     _LOGGER.info("Registering climate entries")
+    options = config_entry.options
+    zone_limits = {
+        1: (
+            int(options.get(CONF_ZONE1_MIN_TEMP, DEFAULT_ZONE_MIN_TEMP)),
+            int(options.get(CONF_ZONE1_MAX_TEMP, DEFAULT_ZONE_MAX_TEMP)),
+        ),
+        2: (
+            int(options.get(CONF_ZONE2_MIN_TEMP, DEFAULT_ZONE_MIN_TEMP)),
+            int(options.get(CONF_ZONE2_MAX_TEMP, DEFAULT_ZONE_MAX_TEMP)),
+        ),
+    }
 
     try:
         devices = await device_manager.get_devices()
         for device in devices:
             # Zone 1 climate entity
-            climate_zone1 = ToshibaHeatingZone(device, zone=1)
+            climate_zone1 = ToshibaHeatingZone(
+                device,
+                zone=1,
+                min_temp=zone_limits[1][0],
+                max_temp=zone_limits[1][1],
+            )
             new_entities.append(climate_zone1)
 
             # Zone 2 climate entity
-            climate_zone2 = ToshibaHeatingZone(device, zone=2)
+            climate_zone2 = ToshibaHeatingZone(
+                device,
+                zone=2,
+                min_temp=zone_limits[2][0],
+                max_temp=zone_limits[2][1],
+            )
             new_entities.append(climate_zone2)
     except Exception as ex:
         _LOGGER.error("Error during connection to Toshiba server %s", ex)
@@ -66,7 +96,13 @@ class ToshibaHeatingZone(ToshibaAcStateEntity, ClimateEntity):
     _attr_target_temperature_step = 1
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
 
-    def __init__(self, toshiba_device: ToshibaAcDevice, zone: int = 1):
+    def __init__(
+        self,
+        toshiba_device: ToshibaAcDevice,
+        zone: int = 1,
+        min_temp: int = DEFAULT_ZONE_MIN_TEMP,
+        max_temp: int = DEFAULT_ZONE_MAX_TEMP,
+    ):
         """Initialize the climate."""
         super().__init__(toshiba_device)
 
@@ -76,6 +112,8 @@ class ToshibaHeatingZone(ToshibaAcStateEntity, ClimateEntity):
         self._attr_name = f"Zone {zone}"
         self._zone_power_override: bool | None = None
         self._zone_power_override_ts = 0.0
+        self._min_temp = min_temp
+        self._max_temp = max(max_temp, min_temp)
 
     def _raw_byte(self, one_based_index: int) -> int | None:
         raw = getattr(self._device.fcu_state, "_status_string", "")
@@ -117,8 +155,10 @@ class ToshibaHeatingZone(ToshibaAcStateEntity, ClimateEntity):
 
     async def async_set_temperature(self, **kwargs):
         """Set new target temperature."""
-        set_temperature = kwargs[ATTR_TEMPERATURE]
-        await set_zone_temperature(self._device, self.zone, int(set_temperature))
+        requested = kwargs[ATTR_TEMPERATURE]
+        bounded = max(self.min_temp, min(self.max_temp, float(requested)))
+        target = int(math.floor(bounded + 0.5))
+        await set_zone_temperature(self._device, self.zone, target)
 
     async def async_turn_on(self) -> None:
         """Turn device on."""
@@ -149,7 +189,12 @@ class ToshibaHeatingZone(ToshibaAcStateEntity, ClimateEntity):
             return HVACMode.COOL
         if mode_raw == 0x06:
             return HVACMode.HEAT
-        return HVACMode.AUTO
+        # Byte 6 can occasionally be stale/empty even when mode is active.
+        # Fall back to library mode to avoid HomeKit forcing redundant writes.
+        device_mode = getattr(self._device, "mode", None)
+        if str(device_mode).endswith("COOL"):
+            return HVACMode.COOL
+        return HVACMode.HEAT
 
     @property
     def hvac_modes(self) -> list[HVACMode] | list[str]:
@@ -189,13 +234,12 @@ class ToshibaHeatingZone(ToshibaAcStateEntity, ClimateEntity):
     @property
     def min_temp(self) -> float:
         """Return the minimum temperature."""
-        # Keep HomeKit constraints stable across mode transitions.
-        return 16
+        return self._min_temp
 
     @property
     def max_temp(self) -> float:
         """Return the maximum temperature."""
-        return 40
+        return self._max_temp
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any]:
