@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 
-PLATFORMS = ["climate",  "sensor",  "water_heater", "binary_sensor"]
+PLATFORMS = ["climate", "sensor", "water_heater", "binary_sensor", "switch"]
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-from time import monotonic
 
 from toshiba_estia.device import ToshibaAcDevice
 
@@ -68,8 +67,6 @@ class ToshibaDHW(ToshibaAcStateEntity, WaterHeaterEntity):
         self._attr_name = f"{self._device.name} Hot water"
         self._attr_min_temperature = 20
         self._attr_max_temperature = 65
-        self._booster_requested_override: bool | None = None
-        self._booster_override_ts = 0.0
 
     def _raw_byte(self, one_based_index: int) -> int | None:
         raw = getattr(self._device.fcu_state, "_status_string", "")
@@ -82,27 +79,19 @@ class ToshibaDHW(ToshibaAcStateEntity, WaterHeaterEntity):
         except ValueError:
             return None
 
-    def _is_booster_requested(self) -> bool:
-        # Booster request is encoded with value 0x10 in HDU payload byte 10.
-        # Depending on backend response path we may also observe it on byte 19,
-        # so accept either as a request signal.
-        b10 = self._raw_byte(10)
-        b19 = self._raw_byte(19)
-        raw_flag = bool(
-            (b10 is not None and (b10 & 0x10))
-            or (b19 is not None and (b19 & 0x10))
-        )
-        coil_active = bool(self._device.electric_coil_dhw_is_active)
-        observed = raw_flag or coil_active
-        # Keep UI in sync immediately after command; telemetry may lag.
-        if self._booster_requested_override is not None and monotonic() - self._booster_override_ts < 180:
-            return self._booster_requested_override
-        return observed
-
     def _is_dhw_enabled(self) -> bool:
         b1 = self._raw_byte(1)
         # Captured app protocol: byte1=0x0C means DHW ON, byte1=0x08 means DHW OFF.
         return b1 == 0x0C
+
+    def _is_booster_requested(self) -> bool:
+        b10 = self._raw_byte(10)
+        b19 = self._raw_byte(19)
+        return bool(
+            (b10 is not None and (b10 & 0x10))
+            or (b19 is not None and (b19 & 0x10))
+            or self._device.electric_coil_dhw_is_active
+        )
 
     async def async_set_temperature(self, **kwargs):
         """Set new target temperature."""
@@ -115,13 +104,9 @@ class ToshibaDHW(ToshibaAcStateEntity, WaterHeaterEntity):
 
 
     async def async_turn_on(self) -> None:
-        self._booster_requested_override = False
-        self._booster_override_ts = monotonic()
         await set_dhw_operation_mode(self._device, STATE_HEAT_PUMP)
 
     async def async_turn_off(self) -> None:
-        self._booster_requested_override = False
-        self._booster_override_ts = monotonic()
         await set_dhw_operation_mode(self._device, STATE_OFF)
 
     @property
@@ -147,7 +132,7 @@ class ToshibaDHW(ToshibaAcStateEntity, WaterHeaterEntity):
 
     @property
     def current_operation(self) -> str:
-        """Return selected operation mode (booster request state)."""
+        """Return selected operation mode."""
         if not self._is_dhw_enabled():
             return STATE_OFF
         if self._is_booster_requested():
@@ -170,14 +155,7 @@ class ToshibaDHW(ToshibaAcStateEntity, WaterHeaterEntity):
         return self.operation_list
 
     async def async_set_operation_mode(self, operation_mode: str) -> None:
-        """Switch booster state via operation mode."""
-        if operation_mode == STATE_OFF:
-            self._booster_requested_override = False
-        elif operation_mode == STATE_ELECTRIC:
-            self._booster_requested_override = True
-        elif operation_mode == STATE_HEAT_PUMP:
-            self._booster_requested_override = False
-        else:
+        """Switch DHW operation mode."""
+        if operation_mode not in (STATE_OFF, STATE_HEAT_PUMP, STATE_ELECTRIC):
             raise ValueError(f"Unsupported DHW operation mode: {operation_mode}")
-        self._booster_override_ts = monotonic()
         await set_dhw_operation_mode(self._device, operation_mode)

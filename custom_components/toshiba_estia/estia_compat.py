@@ -17,6 +17,8 @@ from toshiba_estia.device.properties import ToshibaAcMode
 
 _LOGGER = logging.getLogger(__name__)
 STATE_OFF = "off"
+ZONE_MIN_TEMP = 16
+ZONE_MAX_TEMP = 40
 
 
 def _water_function_is_on(device: ToshibaAcDevice) -> bool:
@@ -100,7 +102,8 @@ async def _refresh_zone_state(device: ToshibaAcDevice) -> None:
 
 
 async def set_zone_temperature(device: ToshibaAcDevice, zone: int, temp_c: int) -> None:
-    await _send_hdu(device, {7 if zone == 1 else 14: _temp_to_raw(int(temp_c))})
+    bounded = max(ZONE_MIN_TEMP, min(ZONE_MAX_TEMP, int(temp_c)))
+    await _send_hdu(device, {7 if zone == 1 else 14: _temp_to_raw(bounded)})
 
 
 def _active_mode_raw(device: ToshibaAcDevice) -> int:
