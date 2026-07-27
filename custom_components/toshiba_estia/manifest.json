@@ -13,6 +13,6 @@
     "janus==1.0.0"
   ],
   "ssdp": [],
-  "version": "2025.12.1",
+  "version": "2025.12.2",
   "zeroconf": []
 }

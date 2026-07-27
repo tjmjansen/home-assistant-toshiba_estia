@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 
@@ -78,3 +79,34 @@ async def test_setup_entry_does_not_retry_on_transient_api_error(monkeypatch) ->
         await async_setup_entry(object(), Entry())
 
     assert len(connect_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_setup_entry_times_out_before_home_assistant_bootstrap(
+    monkeypatch,
+) -> None:
+    """Test setup returns a retryable error when the external library backs off."""
+
+    class DeviceManager:
+        def __init__(self, *args):
+            self.on_sas_token_updated_callback = set()
+
+        async def connect(self):
+            await asyncio.sleep(60)
+
+    class Entry:
+        entry_id = "entry-id"
+        data = {
+            "username": "user",
+            "password": "password",
+            "device_id": "device-id",
+            "sas_token": "sas-token",
+        }
+
+    monkeypatch.setattr("custom_components.toshiba_estia.CONNECT_TIMEOUT", 0.01)
+    monkeypatch.setattr(
+        "custom_components.toshiba_estia.ToshibaAcDeviceManager", DeviceManager
+    )
+
+    with pytest.raises(ConfigEntryNotReady):
+        await async_setup_entry(object(), Entry())

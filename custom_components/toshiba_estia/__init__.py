@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from toshiba_estia.device_manager import ToshibaAcDeviceManager
@@ -14,6 +15,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from .const import DOMAIN
 
 PLATFORMS = ["climate", "sensor", "water_heater", "binary_sensor", "switch"]
+CONNECT_TIMEOUT = 30
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,6 +41,11 @@ def add_sas_token_updated_callback_for_entry(
     device_manager.on_sas_token_updated_callback.add(wrapper_callback)
 
 
+async def connect_device_manager(device_manager: ToshibaAcDeviceManager) -> str | None:
+    """Connect to Toshiba, bounded by Home Assistant setup expectations."""
+    return await asyncio.wait_for(device_manager.connect(), timeout=CONNECT_TIMEOUT)
+
+
 async def async_setup(hass: HomeAssistant, config: dict):
     """Set up the Hello World component."""
     # Ensure our name space for storing objects is a known type. A dict is
@@ -59,7 +66,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     try:
-        await device_manager.connect()
+        await connect_device_manager(device_manager)
     except ToshibaAcHttpApiAuthError as ex:
         _LOGGER.warning("Initial connection failed, trying to get new sas_token...")
         # If it fails to connect, try to get a new sas_token
@@ -68,7 +75,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
         try:
-            new_sas_token = await device_manager.connect()
+            new_sas_token = await connect_device_manager(device_manager)
 
             _LOGGER.info("Successfully got new sas_token!")
 
