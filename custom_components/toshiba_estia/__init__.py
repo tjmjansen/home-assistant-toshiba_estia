@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 
 from toshiba_estia.device_manager import ToshibaAcDeviceManager
+from toshiba_estia.utils.http_api import ToshibaAcHttpApiAuthError, ToshibaAcHttpApiError
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 
 from .const import DOMAIN
 
@@ -58,7 +60,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     try:
         await device_manager.connect()
-    except Exception:
+    except ToshibaAcHttpApiAuthError as ex:
         _LOGGER.warning("Initial connection failed, trying to get new sas_token...")
         # If it fails to connect, try to get a new sas_token
         device_manager = ToshibaAcDeviceManager(
@@ -73,9 +75,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Save new sas_token
             new_data = {**entry.data, "sas_token": new_sas_token}
             hass.config_entries.async_update_entry(entry, data=new_data)
-        except Exception:
-            _LOGGER.warning("Connection failed on second try, aborting!")
-            return False
+        except ToshibaAcHttpApiAuthError as auth_ex:
+            _LOGGER.warning("Authentication failed while refreshing sas_token")
+            raise ConfigEntryAuthFailed from auth_ex
+        except (ToshibaAcHttpApiError, TimeoutError) as refresh_ex:
+            _LOGGER.warning("Connection failed while refreshing sas_token")
+            raise ConfigEntryNotReady from refresh_ex
+        except Exception as refresh_ex:
+            _LOGGER.warning("Unexpected error while refreshing sas_token")
+            raise ConfigEntryNotReady from refresh_ex
+    except (ToshibaAcHttpApiError, TimeoutError) as ex:
+        _LOGGER.warning("Connection to Toshiba server failed")
+        raise ConfigEntryNotReady from ex
+    except Exception as ex:
+        _LOGGER.warning("Unexpected error while connecting to Toshiba server")
+        raise ConfigEntryNotReady from ex
 
     add_sas_token_updated_callback_for_entry(hass, entry, device_manager)
 
