@@ -25,9 +25,17 @@ if "toshiba_estia.device_manager" not in sys.modules:
     class ToshibaAcHttpApiError(Exception):
         """Stub API error from external package."""
 
+    class ToshibaAcHttpApi:
+        """Stub HTTP API from external package."""
+
+        async def request_api(self, *args, **kwargs):
+            """Stub request API."""
+
     device_manager.ToshibaAcDeviceManager = ToshibaAcDeviceManager
+    http_api.ToshibaAcHttpApi = ToshibaAcHttpApi
     http_api.ToshibaAcHttpApiAuthError = ToshibaAcHttpApiAuthError
     http_api.ToshibaAcHttpApiError = ToshibaAcHttpApiError
+    utils.http_api = http_api
     sys.modules["toshiba_estia"] = toshiba_estia
     sys.modules["toshiba_estia.device_manager"] = device_manager
     sys.modules["toshiba_estia.utils"] = utils

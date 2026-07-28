@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 
+import aiohttp
 from toshiba_estia.device_manager import ToshibaAcDeviceManager
+from toshiba_estia.utils import http_api as toshiba_http_api
 from toshiba_estia.utils.http_api import ToshibaAcHttpApiAuthError, ToshibaAcHttpApiError
 
 from homeassistant.config_entries import ConfigEntry
@@ -18,6 +21,25 @@ PLATFORMS = ["climate", "sensor", "water_heater", "binary_sensor", "switch"]
 CONNECT_TIMEOUT = 30
 
 _LOGGER = logging.getLogger(__name__)
+
+_original_request_api = toshiba_http_api.ToshibaAcHttpApi.request_api
+
+
+async def _patched_request_api(
+    self: toshiba_http_api.ToshibaAcHttpApi, *args, **kwargs
+):
+    """Create Toshiba API sessions with the Device-ID header required by the WAF."""
+    if not self.session or self.session.closed:
+        timeout = aiohttp.ClientTimeout(total=20, connect=10, sock_read=15)
+        self.session = aiohttp.ClientSession(
+            timeout=timeout,
+            headers={"Device-ID": secrets.token_hex(8)},
+        )
+
+    return await _original_request_api(self, *args, **kwargs)
+
+
+toshiba_http_api.ToshibaAcHttpApi.request_api = _patched_request_api
 
 
 async def sas_token_updated_for_entry(
